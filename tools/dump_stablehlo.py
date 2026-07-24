@@ -33,13 +33,37 @@ def _dump(name: str, fn, args, out_dir: pathlib.Path) -> None:
 
 def main(out_dir: pathlib.Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Fixture set grows with the verifier: one entry per round function per
-    # proved config. Empty until hachi_zorch.verifier lands its first round.
-    fixtures: list[tuple[str, object, tuple]] = []
+    from hachi_zorch.verifier import (
+        ROUND_DEG_ALPHA,
+        eval_split,
+        linf_norm_check,
+        paired_round_check,
+        round_deg_zero,
+    )
+
+    bb = jnp.babybear
+    b = 2
+    msg_len = (round_deg_zero(b) + 1) + (ROUND_DEG_ALPHA + 1)
+    # One fixture per pure kernel per proved config; names carry the config.
+    fixtures = [
+        (
+            f"paired_round_check_b{b}_babybear",
+            paired_round_check,
+            (jnp.zeros((2,), bb), jnp.zeros((msg_len,), bb), jnp.zeros((), bb)),
+        ),
+        (
+            "eval_split_nl2_nh2_babybear",
+            eval_split,
+            (jnp.zeros((4, 4), bb), jnp.zeros((2,), bb), jnp.zeros((2,), bb)),
+        ),
+        (
+            "linf_norm_check_babybear",
+            lambda resp: linf_norm_check(resp, 2013265921, 3),
+            (jnp.zeros((8,), jnp.uint32),),
+        ),
+    ]
     for name, fn, args in fixtures:
         _dump(name, fn, args, out_dir)
-    if not fixtures:
-        print("no fixtures registered yet; see hachi_zorch/verifier.py")
 
 
 if __name__ == "__main__":
