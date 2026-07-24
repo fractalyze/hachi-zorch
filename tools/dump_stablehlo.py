@@ -38,6 +38,7 @@ def main(out_dir: pathlib.Path) -> None:
         eval_split,
         linf_norm_check,
         paired_round_check,
+        paired_rounds_check,
         round_deg_zero,
     )
 
@@ -60,6 +61,15 @@ def main(out_dir: pathlib.Path) -> None:
             "linf_norm_check_babybear",
             lambda resp: linf_norm_check(resp, 2013265921, 3),
             (jnp.zeros((8,), jnp.uint32),),
+        ),
+        (
+            "paired_rounds_check_m2_b1_babybear",
+            paired_rounds_check,
+            (
+                jnp.zeros((2,), bb),
+                jnp.zeros((2, (round_deg_zero(1) + 1) + (ROUND_DEG_ALPHA + 1)), bb),
+                jnp.zeros((2,), bb),
+            ),
         ),
     ]
     for name, fn, args in fixtures:

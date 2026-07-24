@@ -93,6 +93,24 @@ def linf_norm_check(response: Array, modulus: int, bound: int) -> Array:
     return jnp.all(centered <= bound)
 
 
+def paired_rounds_check(
+    claim: Array, msgs: Array, rs: Array
+) -> tuple[Array, Array]:
+    """A chain of paired sum-check rounds — the loop of [NOZ26] Figure 7,
+    mirroring ArkLib's `roundsChain` recursion over the guarded append.
+
+    `msgs` is `(m0, msg_len)` (one coefficient row per round), `rs` the
+    `(m0,)` shared challenges. The loop is a Python loop over the static
+    leading dimension, so the trace stays control-flow-free. Returns the
+    final reduced claim pair and the conjunction of every round identity.
+    """
+    ok = None
+    for i in range(msgs.shape[0]):
+        claim, ok_i = paired_round_check(claim, msgs[i], rs[i])
+        ok = ok_i if ok is None else ok & ok_i
+    return claim, ok
+
+
 @partial(
     jax.tree_util.register_dataclass,
     data_fields=[],
