@@ -22,7 +22,7 @@ from typing import Any
 
 import frx.numpy as fnp
 import zk_dtypes
-from frx import Array, lax
+from frx import Array
 
 # [NOZ26] pins no concrete modulus. It requires `q = 5 (mod 8)` (Lemma 5 --
 # the congruence fixes how `X^d + 1` factors over `Z_q`, and with it the
@@ -63,11 +63,11 @@ def one(dtype: Any) -> Array:
 def sum_elements(x: Array, axis: int = 0) -> Array:
     """Sum `F_q^k` elements along `axis`, keeping the coefficient axis.
 
-    `lax.reduce` rather than `fnp.sum`: the numpy-level reduction routes its
-    result dtype through an integer-width promotion guard that recognizes only
-    the curated field families, and raises on a parametric descriptor.
+    Summing base-field coefficients pointwise is the extension sum, so this
+    needs no knowledge of the extension beyond leaving the trailing axis
+    alone.
     """
-    return lax.reduce(x, fnp.zeros((), x.dtype), lax.add, (axis,))
+    return fnp.sum(x, axis=axis)
 
 
 def mul(a: Array, b: Array) -> Array:
