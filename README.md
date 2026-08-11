@@ -34,14 +34,14 @@ here invalidates the proofs there by construction.
 
 [NOZ26] pins no concrete modulus, so this repo picks one: `q = 2^32 - 99`, the
 largest prime below `2^32` satisfying the congruence `q = 5 (mod 8)` the scheme
-requires. Verifier arithmetic is in `F_q^4` (degree `ceil(128 / log2 q)`),
-represented as four `F_q` coefficients on a trailing axis rather than a native
-extension dtype — see `python/hachi_zorch/field.py` for why, and for the
-irreducibility argument behind `X^4 - 2`.
+requires. Verifier arithmetic is in `F_q^4` (degree `ceil(128 / log2 q)`), a
+first-class element type end to end: one `stablehlo.multiply` is one extension
+product, and no kernel spells the coefficient arithmetic out. See
+`python/hachi_zorch/field.py` for the irreducibility argument behind `X^4 - 2`.
 
-No curated field family satisfies Hachi's congruence, so the base field is a
-*parametric* prime field. Tracing therefore needs a Fractal JAX build with
-parametric field support:
+No curated field family satisfies Hachi's congruence, so both fields are
+*parametric*. Tracing therefore needs a Fractal JAX build carrying parametric
+prime and extension field support:
 
 ```sh
 uv venv --python 3.11 .venv
@@ -69,5 +69,3 @@ dependency order:
    no `VerifierRound` wrapper — an untestable one would be worse than none.
 3. zorch spine pin (Bazel MODULE wiring, matching the other `*-zorch`
    consumers).
-4. A native `F_q^4` dtype in place of the coefficient representation, once
-   parametric extension descriptors cross the frx frontend.

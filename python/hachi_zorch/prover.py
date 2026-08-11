@@ -23,8 +23,6 @@ from __future__ import annotations
 import frx.numpy as fnp
 from frx import Array
 
-from hachi_zorch import field
-
 
 def _split(table: Array) -> tuple[Array, Array]:
     even, odd = table[0::2], table[1::2]
@@ -35,17 +33,13 @@ def _round_coeffs(a: Array, bb: Array) -> Array:
     a0, da = _split(a)
     b0, db = _split(bb)
     return fnp.stack(
-        [
-            field.sum_elements(field.mul(a0, b0)),
-            field.sum_elements(field.mul(a0, db) + field.mul(b0, da)),
-            field.sum_elements(field.mul(da, db)),
-        ]
+        [fnp.sum(a0 * b0), fnp.sum(a0 * db + b0 * da), fnp.sum(da * db)]
     )
 
 
 def _bind(table: Array, t: Array) -> Array:
     even, diff = _split(table)
-    return even + field.mul(t, diff)
+    return even + t * diff
 
 
 def prove_paired_sumcheck(
@@ -54,17 +48,12 @@ def prove_paired_sumcheck(
     """Round messages for the paired sum-check of two product summands.
 
     `f0` / `fa` are the factor tables of the `H0`- and `H_alpha`-summands
-    (each `(2^m0, k)`), `rs` the `(m0, k)` shared challenges. Returns
+    (each `2^m0` entries), `rs` the `(m0,)` shared challenges. Returns
     `(claims, msgs)`: the initial claim pair `[sum f0, sum fa]` and the
-    `(m0, 6, k)` coefficient rows (`g0` then `ga`, ascending)."""
+    `(m0, 6)` coefficient rows (`g0` then `ga`, ascending)."""
     a, b = f0
     c, d = fa
-    claims = fnp.stack(
-        [
-            field.sum_elements(field.mul(a, b)),
-            field.sum_elements(field.mul(c, d)),
-        ]
-    )
+    claims = fnp.stack([fnp.sum(a * b), fnp.sum(c * d)])
     rows = []
     for i in range(rs.shape[0]):
         rows.append(fnp.concatenate([_round_coeffs(a, b), _round_coeffs(c, d)]))
@@ -82,4 +71,4 @@ def final_evals(
     c, d = fa
     for i in range(rs.shape[0]):
         a, b, c, d = (_bind(x, rs[i]) for x in (a, b, c, d))
-    return fnp.stack([field.mul(a[0], b[0]), field.mul(c[0], d[0])])
+    return fnp.stack([a[0] * b[0], c[0] * d[0]])

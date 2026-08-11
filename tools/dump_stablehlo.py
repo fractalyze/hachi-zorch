@@ -4,8 +4,9 @@
 Each fixture is the exact `frx.jit(fn).lower(*args).as_text()` output for one
 round function at one config; zorch-fv extracts these to Lean and pins their
 hashes next to the equivalence proofs. Run from a venv with the Fractal JAX
-build, which is what makes Hachi's base field -- a parametric prime field,
-since no curated family satisfies its congruence -- traceable at all.
+build: Hachi's fields are parametric (no curated family satisfies its
+congruence on `q`), and `F_q^k` has to survive tracing as a first-class element
+type, so each fixture's arithmetic is one op per extension operation.
 
 Usage:
     python tools/dump_stablehlo.py OUTPUT_DIR
@@ -45,13 +46,12 @@ def _dump(name: str, fn, args, out_dir: pathlib.Path) -> None:
 
 def main(out_dir: pathlib.Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    fq = field.base_field()
-    k = field.EXT_DEGREE
+    fqk = field.ext_field()
 
-    def elems(*leading: int):
-        """Zeros of the given shape in `F_q^k` elements -- the trailing
-        coefficient axis is the element, never a protocol dimension."""
-        return fnp.zeros((*leading, k), fq)
+    def elems(*shape: int):
+        """Zeros of the given shape in `F_q^k`. Only shape and dtype reach the
+        trace, so the values are irrelevant -- the element type is the point."""
+        return fnp.zeros(shape, fqk)
 
     b = 2
     msg_len = (round_deg_zero(b) + 1) + (ROUND_DEG_ALPHA + 1)

@@ -15,19 +15,21 @@ from hachi_zorch import field
 from hachi_zorch.prover import final_evals, prove_paired_sumcheck
 from hachi_zorch.verifier import paired_rounds_check
 
-F = field.base_field()
 Q = field.MODULUS
 K = field.EXT_DEGREE
+FE = field.ext_field()
+
+
+def _rand(rng, n: int):
+    return fnp.asarray(
+        field.from_coeffs(rng.integers(0, Q, size=(n, K)).tolist())
+    )
 
 
 def _random_instance(m0: int, seed: int):
     rng = np.random.default_rng(seed)
-    tables = [
-        fnp.asarray(np.array(rng.integers(0, Q, size=(2**m0, K)), dtype=F))
-        for _ in range(4)
-    ]
-    rs = fnp.asarray(np.array(rng.integers(1, Q, size=(m0, K)), dtype=F))
-    return (tables[0], tables[1]), (tables[2], tables[3]), rs
+    tables = [_rand(rng, 2**m0) for _ in range(4)]
+    return (tables[0], tables[1]), (tables[2], tables[3]), _rand(rng, m0)
 
 
 class PairedRoundsRoundtripTest(absltest.TestCase):
@@ -38,8 +40,8 @@ class PairedRoundsRoundtripTest(absltest.TestCase):
         self.assertTrue(bool(ok))
 
         expected = final_evals(f0, fa, rs)
-        self.assertTrue(bool(field.eq(final[0], expected[0])))
-        self.assertTrue(bool(field.eq(final[1], expected[1])))
+        self.assertTrue(bool(final[0] == expected[0]))
+        self.assertTrue(bool(final[1] == expected[1]))
 
     def test_two_rounds(self) -> None:
         self._roundtrip(2, seed=0)
@@ -50,7 +52,7 @@ class PairedRoundsRoundtripTest(absltest.TestCase):
     def test_tampered_row_rejects(self) -> None:
         f0, fa, rs = _random_instance(3, seed=2)
         claims, msgs = prove_paired_sumcheck(f0, fa, rs)
-        one = field.one(F)
+        one = fnp.ones((), FE)
         for row in range(msgs.shape[0]):
             tampered = msgs.at[row, 4].set(msgs[row, 4] + one)
             _, ok = paired_rounds_check(claims, tampered, rs)

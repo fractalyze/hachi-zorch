@@ -6,10 +6,9 @@ Each public name transcribes one verifier-side definition from ArkLib
 pure and takes its challenges as arguments -- the Fiat-Shamir seam the zorch-fv
 equivalence proofs cut at -- and is what `tools/dump_stablehlo.py` traces.
 
-All verifier arithmetic is in `F_q^k`, per [NOZ26] Section 5.1; an element is
-`k` base-field coefficients on a trailing axis (see `field`). So a vector of
-`n` field elements has shape `(n, k)`, and the `(k,)` axis is never a protocol
-dimension -- it is the element.
+All verifier arithmetic is in `F_q^k`, per [NOZ26] Section 5.1, and that is the
+element type of every array below: an `(n,)` array holds `n` extension
+elements, and `*` is the extension product.
 
 Round messages are coefficient-form, matching ArkLib's `RoundMsg F b`: the wire
 carries the pair `(g0, ga)` concatenated as one array of `(2b + 1) + 3`
@@ -22,8 +21,6 @@ from __future__ import annotations
 import frx.numpy as fnp
 from frx import Array
 
-from hachi_zorch import field
-
 ROUND_DEG_ALPHA = 2  # degree of g_alpha, pinned by [NOZ26] Figure 6
 
 
@@ -33,7 +30,7 @@ def round_deg_zero(b: int) -> int:
 
 
 def _eval_coeffs_unrolled(coeffs: Array, r: Array) -> Array:
-    """`sum_i coeffs[i] * r^i` over `F_q^k`, unrolled.
+    """`sum_i coeffs[i] * r^i`, unrolled.
 
     zorch's `eval_coeffs` carries the power-sum through a `lax.scan` to keep GPU
     kernel parameters O(1) in the degree; that emits `stablehlo.while`, and a
@@ -43,8 +40,8 @@ def _eval_coeffs_unrolled(coeffs: Array, r: Array) -> Array:
     acc = coeffs[0]
     power = r
     for i in range(1, coeffs.shape[0]):
-        acc = acc + field.mul(coeffs[i], power)
-        power = field.mul(power, r)
+        acc = acc + coeffs[i] * power
+        power = power * r
     return acc
 
 
@@ -58,8 +55,8 @@ def paired_round_check(claim: Array, msg: Array, r: Array) -> tuple[Array, Array
     """
     split = msg.shape[0] - (ROUND_DEG_ALPHA + 1)
     g0, ga = msg[:split], msg[split:]
-    ok0 = field.eq(claim[0], g0[0] + field.sum_elements(g0))
-    oka = field.eq(claim[1], ga[0] + field.sum_elements(ga))
+    ok0 = claim[0] == g0[0] + fnp.sum(g0)
+    oka = claim[1] == ga[0] + fnp.sum(ga)
     next_claim = fnp.stack(
         [_eval_coeffs_unrolled(g0, r), _eval_coeffs_unrolled(ga, r)]
     )
@@ -69,10 +66,10 @@ def paired_round_check(claim: Array, msg: Array, r: Array) -> tuple[Array, Array
 def monomial_basis(x: Array) -> Array:
     """Monomial tensor basis `mb(x)`: entry `i` is `prod_j x_j^{bit_j(i)}`,
     little-endian (bit 0 = first variable), matching
-    `CMlPolynomial.monomialBasis`. `x` is `(n, k)`, the result `(2^n, k)`."""
-    basis = field.one(x.dtype)[None, :]
+    `CMlPolynomial.monomialBasis`."""
+    basis = fnp.ones((1,), x.dtype)
     for j in range(x.shape[0]):
-        basis = fnp.concatenate([basis, field.mul(basis, x[j])])
+        basis = fnp.concatenate([basis, basis * x[j]])
     return basis
 
 
@@ -81,12 +78,9 @@ def eval_split(matrix: Array, xl: Array, xh: Array) -> Array:
     `mb(xl) . (matrix @ mb(xh))` -- `evalSplit` in `Hachi/EvalSplit.lean`.
 
     `matrix` is the `2^nl x 2^nh` reshape of the coefficient vector, rows
-    indexed by the low (first) variables, columns by the high (last) ones. Both
-    contractions are broadcast-multiply plus a sum: `dot_general` carries no
-    notion of the extension product, which lives in `field.mul`.
+    indexed by the low (first) variables, columns by the high (last) ones.
     """
-    column = field.sum_elements(field.mul(matrix, monomial_basis(xh)), axis=1)
-    return field.sum_elements(field.mul(monomial_basis(xl), column), axis=0)
+    return monomial_basis(xl) @ (matrix @ monomial_basis(xh))
 
 
 def linf_norm_check(response: Array, modulus: int, bound: int) -> Array:
@@ -111,10 +105,10 @@ def paired_rounds_check(claim: Array, msgs: Array, rs: Array) -> tuple[Array, Ar
     """A chain of paired sum-check rounds -- the loop of [NOZ26] Figure 7,
     mirroring ArkLib's `roundsChain` recursion over the guarded append.
 
-    `msgs` is `(m0, msg_len, k)` (one coefficient row per round), `rs` the
-    `(m0, k)` shared challenges. The loop is a Python loop over the static
-    leading dimension, so the trace stays control-flow-free. Returns the final
-    reduced claim pair and the conjunction of every round identity.
+    `msgs` is `(m0, msg_len)` (one coefficient row per round), `rs` the `(m0,)`
+    shared challenges. The loop is a Python loop over the static leading
+    dimension, so the trace stays control-flow-free. Returns the final reduced
+    claim pair and the conjunction of every round identity.
     """
     ok = None
     for i in range(msgs.shape[0]):
