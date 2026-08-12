@@ -27,8 +27,24 @@ proofs in [ArkLib](https://github.com/Verified-zkEVM/ArkLib)
 
 `tools/dump_stablehlo.py` traces the verifier's round functions to StableHLO
 text. Those modules are the fixtures zorch-fv extracts to Lean and proves
-equivalent to its specs. CI keeps the fixture hashes in sync; a verifier change
-here invalidates the proofs there by construction.
+equivalent to its specs, so a verifier change here invalidates the proofs there
+by construction.
+
+CI closes that loop rather than trusting it: the `fv` job traces this branch's
+verifier into a zorch-fv checkout, requires the trace to match the fixtures
+committed there, extracts them, and runs zorch-fv's `lake build`. A verifier
+change that moves a fixture or breaks an equivalence proof fails before merge
+instead of at the next dump.
+
+A coupled change is therefore two pull requests, zorch-fv's first. That order
+is the one that works: zorch-fv proves whatever it has committed without
+consulting this repo, so it can carry a trace dumped from a branch here, while
+the reverse order ships a verifier whose fixture is stale and is repairable
+from neither side.
+
+Extraction parses a fixture with MLIR rather than reading it as text, so the
+bindings that print the assembly are the ones that read it back — both ends of
+the contract run in the environment below.
 
 ## The field
 
@@ -40,8 +56,8 @@ product, and no kernel spells the coefficient arithmetic out. See
 `python/hachi_zorch/field.py` for the irreducibility argument behind `X^4 - 2`.
 
 No curated field family satisfies Hachi's congruence, so both fields are
-*parametric*. Tracing therefore needs a Fractal JAX build carrying parametric
-prime and extension field support:
+*parametric*. Tracing and extraction therefore both need a Fractal JAX build
+carrying parametric prime and extension field support:
 
 ```sh
 uv venv --python 3.11 .venv
@@ -52,6 +68,11 @@ uv pip install --no-deps "pyzorch @ git+ssh://git@github.com/fractalyze/zorch@ma
 
 PYTHONPATH=python python -m hachi_zorch.testing.verifier_test
 PYTHONPATH=python python tools/dump_stablehlo.py ../zorch-fv/fixtures
+
+# the same venv, from a zorch-fv checkout, re-extracts a fixture to Lean
+python extractor/extract.py \
+    fixtures/eval_split_nl2_nh2_fq4.stablehlo.txt \
+    ZorchFv/Hachi/Extracted/eval_split_nl2_nh2_fq4.lean
 ```
 
 ## Status
