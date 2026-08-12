@@ -2,11 +2,16 @@
 """Trace verifier round functions to StableHLO fixture files for zorch-fv.
 
 Each fixture is the exact `frx.jit(fn).lower(*args).as_text()` output for one
-round function at one config; zorch-fv extracts these to Lean and pins their
-hashes next to the equivalence proofs. Run from a venv with the Fractal JAX
-build: Hachi's fields are parametric (no curated family satisfies its
-congruence on `q`), and `F_q^k` has to survive tracing as a first-class element
-type, so each fixture's arithmetic is one op per extension operation.
+round function at one config; zorch-fv commits it and proves the Lean it
+extracts from it equivalent to its specs. The sha256 printed per fixture is for
+eyeballing a re-dump against a review, not a stored pin -- what gates drift is
+zorch-fv re-extracting and diffing the committed Lean.
+
+Run from a venv with the Fractal JAX build: Hachi's fields are parametric (no
+curated family satisfies its congruence on `q`), and `F_q^k` has to survive
+tracing as a first-class element type, so each fixture's arithmetic is one op
+per extension operation. That same build is what zorch-fv's extractor parses
+with.
 
 Usage:
     python tools/dump_stablehlo.py OUTPUT_DIR

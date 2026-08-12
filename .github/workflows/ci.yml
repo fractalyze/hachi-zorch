@@ -1,0 +1,146 @@
+name: ci
+
+permissions: read-all
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      zorch_fv_ref:
+        description: >-
+          zorch-fv ref to prove against. Point it at a companion branch when a
+          verifier change needs matching fixtures and proofs on that side.
+        default: main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# frxlib ships as a cp311 manylinux wheel, so the interpreter is pinned rather
+# than left to the runner default. The Fractal JAX version is pinned because it
+# decides both what the trace spells and what zorch-fv's extractor reads back
+# out of it; a different build would surface as artifact drift rather than as
+# the toolchain change it is.
+env:
+  PYTHON_VERSION: '3.11'
+  FRX_VERSION: 0.10.1.dev20260811100738
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Fractal JAX
+        run: |
+          pip install \
+            --index-url https://fractalyze.github.io/pypi/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "frx==$FRX_VERSION" "frxlib==$FRX_VERSION" \
+            zk-dtypes absl-py numpy typing_extensions
+      - name: Field, verifier, and prover tests
+        run: |
+          set -e
+          for mod in field verifier prover; do
+            PYTHONPATH=python python -m "hachi_zorch.testing.${mod}_test"
+          done
+
+  # The verifier lane exists to be proved, so the gate is zorch-fv's proofs run
+  # against this branch's trace: dump, extract, `lake build`. A verifier change
+  # that no longer satisfies the specs fails before merge instead of at the
+  # next dump. Committed fixtures are left out of the equation deliberately --
+  # they cannot carry a change that has not landed yet, which would make every
+  # coupled change red until zorch-fv merged first.
+  #
+  # zorch-fv is private, so the checkout uses the org-level read token rather
+  # than the run's own GITHUB_TOKEN, which is scoped to this repo.
+  fv:
+    runs-on: ubuntu-latest
+    steps:
+      # mathlib's oleans and this job's Python toolchain together overrun the
+      # runner's free space. The failure lands on the cache upload rather than
+      # the build, so without this the cache never saves and every run pays a
+      # cold `lake build` -- minutes, not seconds.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v4
+      - name: Check out zorch-fv
+        uses: actions/checkout@v4
+        with:
+          repository: fractalyze/zorch-fv
+          ref: ${{ github.event.inputs.zorch_fv_ref || 'main' }}
+          token: ${{ secrets.FRACTALYZE_REPOS_READ_TOKEN }}
+          path: zorch-fv
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Fractal JAX
+        run: |
+          pip install \
+            --index-url https://fractalyze.github.io/pypi/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "frx==$FRX_VERSION" "frxlib==$FRX_VERSION" \
+            zk-dtypes absl-py numpy typing_extensions
+      - name: Trace this branch's verifier over zorch-fv's fixtures
+        run: PYTHONPATH=python python tools/dump_stablehlo.py zorch-fv/fixtures
+      # zorch-fv lands first. Its CI re-extracts and proves its own committed
+      # fixture without consulting this repo, so it can carry a trace dumped
+      # from an unmerged branch here; the reverse order cannot be repaired from
+      # either side, leaving a shipped verifier whose fixture is stale. Failing
+      # rather than warning is what keeps a moved fixture off main, since
+      # zorch-fv re-extracts from whatever it has committed and stays
+      # self-consistent whether or not that matches anything shipped.
+      #
+      # Only tracked fixtures are compared, deliberately: a trace with no
+      # counterpart in zorch-fv is a new kernel, which this repo is free to
+      # carry before anything proves it. The next step reports those.
+      - name: Require zorch-fv's fixtures to match this trace
+        working-directory: zorch-fv
+        run: |
+          if git diff --quiet -- fixtures/; then
+            echo "trace matches every committed fixture"
+            exit 0
+          fi
+          git diff --stat -- fixtures/
+          echo "::error::this trace does not match zorch-fv's committed fixtures. Dump it into a zorch-fv branch (tools/dump_stablehlo.py ../zorch-fv/fixtures), land that PR with its proofs, then re-run this one."
+          exit 1
+      - name: Report traced kernels no proof covers
+        working-directory: zorch-fv
+        run: |
+          for fixture in fixtures/*.stablehlo.txt; do
+            name=$(basename "$fixture" .stablehlo.txt)
+            if [ ! -f "ZorchFv/Hachi/Extracted/$name.lean" ]; then
+              echo "::warning::$name traces but has no extracted artifact in zorch-fv, so no equivalence theorem covers it"
+            fi
+          done
+      - name: Extract the trace to Lean
+        working-directory: zorch-fv
+        run: |
+          set -e
+          for lean in ZorchFv/Hachi/Extracted/*.lean; do
+            name=$(basename "$lean" .lean)
+            python extractor/extract.py "fixtures/$name.stablehlo.txt" "$lean"
+          done
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Cache lake packages
+        uses: actions/cache@v4
+        with:
+          path: zorch-fv/.lake
+          key: lake-${{ hashFiles('zorch-fv/lake-manifest.json', 'zorch-fv/lean-toolchain') }}
+      - name: Fetch mathlib olean cache
+        working-directory: zorch-fv
+        run: lake exe cache get
+      - name: Prove this branch's trace equivalent to zorch-fv's specs
+        working-directory: zorch-fv
+        run: lake build
